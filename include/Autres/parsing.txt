@@ -1,0 +1,43 @@
+Code C++ pour parser ce fichier
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <tuple>
+
+int main() {
+    std::string filename = "data.txt";
+    std::ifstream infile(filename);
+
+    if (!infile.is_open()) {
+        std::cerr << "Erreur : impossible d'ouvrir le fichier " << filename << std::endl;
+        return 1;
+    }
+
+    std::vector<std::tuple<int,int,float>> data; // Contiendra X, Y, Valeur
+    std::string line;
+
+    while (std::getline(infile, line)) {       // lire chaque ligne
+        if (line.empty()) continue;           // ignorer lignes vides
+
+        std::istringstream iss(line);          // flux sur la ligne
+        int x, y;
+        float val;
+
+        if (!(iss >> x >> y >> val)) {        // extraire X, Y, Valeur
+            std::cerr << "Erreur de parsing sur la ligne : " << line << std::endl;
+            continue;
+        }
+
+        data.emplace_back(x, y, val);         // stocker dans le vecteur
+    }
+
+    infile.close();
+
+    // Vérification du contenu
+    for (auto& [x, y, val] : data) {
+        std::cout << "X=" << x << " Y=" << y << " Valeur=" << val << std::endl;
+    }
+
+    return 0;
+}

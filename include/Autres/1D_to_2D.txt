@@ -1,0 +1,19 @@
+#include <iostream>
+#include <vector>
+
+int main() {
+    unsigned width = 5;
+    unsigned height = 4;
+    std::vector<int> image(width*height);
+
+    // Remplissage : index 1D → coord 2D
+    for (unsigned idx = 0; idx < width*height; ++idx) {
+        unsigned x = idx % width;
+        unsigned y = idx / width;
+
+        image[idx] = x + y; // juste un exemple
+        std::cout << "index " << idx << " -> (x,y)=(" << x << "," << y << "), value=" << image[idx] << "\n";
+    }
+
+    return 0;
+}

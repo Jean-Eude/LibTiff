@@ -1,0 +1,40 @@
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <regex>
+
+int main() {
+    std::string inputFile  = "raw_data.txt";
+    std::string outputFile = "formatted_data.txt";
+
+    std::ifstream infile(inputFile);
+    std::ofstream outfile(outputFile);
+
+    if (!infile.is_open() || !outfile.is_open()) {
+        std::cerr << "Erreur d'ouverture de fichier" << std::endl;
+        return 1;
+    }
+
+    std::string line;
+    std::regex spaceRegex("\\s+"); // correspond à un ou plusieurs espaces/tabs
+
+    while (std::getline(infile, line)) {
+        // Supprimer espaces au début et à la fin
+        line = std::regex_replace(line, std::regex("^\\s+|\\s+$"), "");
+
+        if (line.empty() || line[0] == '#') continue; // ignorer lignes vides ou commentaires
+
+        // Remplacer tout séparateur multiple par un espace unique
+        line = std::regex_replace(line, spaceRegex, " ");
+
+        // Écrire dans le fichier formaté
+        outfile << line << std::endl;
+    }
+
+    infile.close();
+    outfile.close();
+
+    std::cout << "Fichier reformatté écrit dans " << outputFile << std::endl;
+    return 0;
+}

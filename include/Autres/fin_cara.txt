@@ -1,0 +1,32 @@
+#include <iostream>
+#include <fstream>
+
+int main() {
+    std::string filename = "mon_fichier.txt";
+    std::ifstream file(filename);
+
+    if (!file.is_open()) {
+        std::cerr << "Impossible d'ouvrir le fichier : " << filename << "\n";
+        return 1;
+    }
+
+    int cpt = 0;
+    char ch;
+
+    // Parcours caractère par caractère
+    while (file.get(ch)) {
+        if (ch == '\n') {
+            ++cpt; // incrément à chaque retour à la ligne
+        }
+    }
+
+    // Si le fichier n’a pas de \n à la fin mais contient des données, on peut ajouter +1
+    file.clear();
+    file.seekg(0, std::ios::end);
+    if (file.tellg() > 0) ++cpt;
+
+    std::cout << "Nombre de lignes dans " << filename << " : " << cpt << "\n";
+
+    file.close();
+    return 0;
+}
