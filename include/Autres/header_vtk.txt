@@ -1,0 +1,92 @@
+#pragma once
+
+// =========================
+// Core / base
+// =========================
+#include <vtkSmartPointer.h>
+#include <vtkObject.h>
+
+// =========================
+// Data structures
+// =========================
+#include <vtkImageData.h>
+#include <vtkPoints.h>
+#include <vtkPolyData.h>
+#include <vtkCellArray.h>
+#include <vtkDataArray.h>
+#include <vtkFloatArray.h>
+#include <vtkUnsignedCharArray.h>
+#include <vtkPointData.h>
+
+// =========================
+// Filters
+// =========================
+#include <vtkVertexGlyphFilter.h>
+#include <vtkPolyDataNormals.h>
+#include <vtkContourFilter.h>
+#include <vtkMarchingCubes.h>
+
+// =========================
+// Mapping / rendering (surface)
+// =========================
+#include <vtkMapper.h>
+#include <vtkPolyDataMapper.h>
+#include <vtkDataSetMapper.h>
+
+// =========================
+// Actors
+// =========================
+#include <vtkActor.h>
+#include <vtkProperty.h>
+
+// =========================
+// Rendering core
+// =========================
+#include <vtkRenderer.h>
+#include <vtkRenderWindow.h>
+#include <vtkRenderWindowInteractor.h>
+
+// =========================
+// Interaction styles
+// =========================
+#include <vtkInteractorStyleTrackballCamera.h>
+#include <vtkInteractorStyleSwitchBase.h>
+
+// =========================
+// Volume rendering (IMPORTANT pour voxel / 3D density)
+// =========================
+#include <vtkVolume.h>
+#include <vtkVolumeProperty.h>
+#include <vtkSmartVolumeMapper.h>
+
+// =========================
+// Transfer functions (couleur / transparence)
+// =========================
+#include <vtkColorTransferFunction.h>
+#include <vtkPiecewiseFunction.h>
+
+// =========================
+// Helpers / UI
+// =========================
+#include <vtkAxesActor.h>
+#include <vtkOrientationMarkerWidget.h>
+
+// =========================
+// Math / utilities (VTK)
+# include <vtkMath.h>
+
+
+
+
+
+
+find_package(VTK REQUIRED COMPONENTS
+    CommonCore
+    CommonDataModel
+    FiltersSources
+    RenderingCore
+    RenderingOpenGL2
+    RenderingVolume
+    RenderingVolumeOpenGL2
+    InteractionStyle
+)
