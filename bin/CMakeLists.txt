@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Headers .hpp ou .h
-include_directories(../include ../include/libtiff ../include/tiffdp)
+include_directories(../include ../include/libtiff ../include/tiffdp ../include/matplot)
 
 # Librairies en .so
 link_directories(../lib)
@@ -21,4 +21,4 @@ add_executable(main ${SOURCES})
 target_compile_options(main PRIVATE -Wall -O3)
 
 # Link des librairies 
-target_link_libraries(main PRIVATE -ltiff)
+target_link_libraries(main PRIVATE -ltiff matplot)
