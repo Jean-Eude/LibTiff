@@ -1,0 +1,166 @@
+===============================
+TRANSFORMEE DE RADON DISCRETE
+===============================
+
+1) FORMULE RADON DISCRETE
+
+R(θ, s) ≈ Σ f(x(t), y(t))
+
+avec :
+x(t) = x0 + s cosθ − t sinθ
+y(t) = y0 + s sinθ + t cosθ
+
+Interprétation :
+- on somme les pixels le long d'une droite
+- pour chaque angle θ
+- pour chaque position s
+
+
+-------------------------------
+
+2) FORMULE BACKPROJECTION
+
+f(x, y) ≈ Σ R(θ, x cosθ + y sinθ)
+
+Interprétation :
+- chaque pixel récupère les contributions
+- de toutes les projections angulaires
+
+
+-------------------------------
+
+3) PIPELINE GLOBAL
+
+Image f(x,y)
+    ↓
+Transformée de Radon
+    ↓
+Sinogramme R(θ,s)
+    ↓
+Backprojection
+    ↓
+Image reconstruite
+
+
+-------------------------------
+
+4) CODE C++ (SANS LIBRAIRIE)
+
+#include <iostream>
+#include <vector>
+#include <cmath>
+
+using namespace std;
+
+using Image = vector<vector<float>>;
+
+// ----------------------
+// pixel nearest neighbor
+// ----------------------
+float get(const Image& img, float x, float y) {
+    int h = img.size();
+    int w = img[0].size();
+
+    int xi = round(x);
+    int yi = round(y);
+
+    if (xi < 0 || xi >= w || yi < 0 || yi >= h)
+        return 0;
+
+    return img[yi][xi];
+}
+
+// ----------------------
+// RADON TRANSFORM
+// ----------------------
+vector<vector<float>> radon(const Image& img, int angles, int samples) {
+
+    int h = img.size();
+    int w = img[0].size();
+
+    vector<vector<float>> R(angles, vector<float>(samples, 0));
+
+    float cx = w / 2.0f;
+    float cy = h / 2.0f;
+    float L = sqrt(cx*cx + cy*cy);
+
+    for (int a = 0; a < angles; a++) {
+
+        float theta = a * M_PI / angles;
+        float c = cos(theta);
+        float s = sin(theta);
+
+        for (int j = 0; j < samples; j++) {
+
+            float rho = (2.0f * j / (samples - 1) - 1.0f) * L;
+
+            float sum = 0;
+
+            for (float t = -L; t < L; t += 1.0f) {
+
+                float x = cx + rho * c - t * s;
+                float y = cy + rho * s + t * c;
+
+                sum += get(img, x, y);
+            }
+
+            R[a][j] = sum;
+        }
+    }
+
+    return R;
+}
+
+// ----------------------
+// BACKPROJECTION
+// ----------------------
+Image backproject(const vector<vector<float>>& R, int h, int w) {
+
+    int angles = R.size();
+    int samples = R[0].size();
+
+    Image img(h, vector<float>(w, 0));
+
+    float cx = w / 2.0f;
+    float cy = h / 2.0f;
+    float L = sqrt(cx*cx + cy*cy);
+
+    for (int a = 0; a < angles; a++) {
+
+        float theta = a * M_PI / angles;
+        float c = cos(theta);
+        float s = sin(theta);
+
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+
+                float xr = x - cx;
+                float yr = y - cy;
+
+                float rho = xr * c + yr * s;
+
+                int j = (rho / L + 1.0f) * 0.5f * (samples - 1);
+
+                if (j >= 0 && j < samples)
+                    img[y][x] += R[a][j];
+            }
+        }
+    }
+
+    return img;
+}
+
+
+-------------------------------
+
+5) POINT IMPORTANT
+
+- Radon = projection sur des droites
+- Backprojection = reconstruction par sommation
+- Résultat sans filtre = image floue
+
+Pour une bonne qualité :
+→ utiliser filtre ramp (FFT)
+→ rétroprojection filtrée (FBP)
+
+===============================
