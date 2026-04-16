@@ -1,0 +1,281 @@
+    // =============================
+    // 5. Filtrage (Ram-Lak simplifié)
+    // =============================
+    std::vector<std::vector<float>> filtered = radon;
+
+    for (unsigned t = 0; t < num_angles; t++) {
+        for (unsigned r = 1; r < num_rho - 1; r++) {
+            filtered[t][r] =
+                -radon[t][r - 1]
+                + 2.0f * radon[t][r]
+                - radon[t][r + 1];
+        }
+    }
+
+    std::cout << "Filtrage effectué\n";
+
+    // =============================
+    // 6. Rétroprojection
+    // =============================
+    tiffdp<float> recon(width, height, false, "reconstruction.tiff");
+
+    for (unsigned y = 0; y < height; y++) {
+        for (unsigned x = 0; x < width; x++) {
+
+            float sum = 0.0f;
+
+            float xc = x - cx;
+            float yc = y - cy;
+
+            for (unsigned t = 0; t < num_angles; t++) {
+
+                float theta = t * M_PI / num_angles;
+                float cos_t = std::cos(theta);
+                float sin_t = std::sin(theta);
+
+                float rho = xc * cos_t + yc * sin_t;
+
+                float r_float = (rho + max_rho) * num_rho / (2 * max_rho);
+
+                int r0 = floor(r_float);
+                int r1 = r0 + 1;
+                float w = r_float - r0;
+
+                if (r0 >= 0 && r1 < (int)num_rho) {
+                    sum += filtered[t][r0] * (1.0f - w)
+                         + filtered[t][r1] * w;
+                }
+            }
+
+            recon.setPixel(x, y, sum);
+        }
+    }
+
+    std::cout << "Rétroprojection terminée\n";
+
+    // =============================
+    // 7. Normalisation
+    // =============================
+    float min_val = 1e30f;
+    float max_val = -1e30f;
+
+    for (unsigned y = 0; y < height; y++) {
+        for (unsigned x = 0; x < width; x++) {
+            float v = recon.getPixel(x, y);
+            if (v < min_val) min_val = v;
+            if (v > max_val) max_val = v;
+        }
+    }
+
+    float range = max_val - min_val;
+    if (range > 0.0f) {
+        for (unsigned y = 0; y < height; y++) {
+            for (unsigned x = 0; x < width; x++) {
+                float v = recon.getPixel(x, y);
+                recon.setPixel(x, y, (v - min_val) / range);
+            }
+        }
+    }
+
+    // =============================
+    // 8. Sauvegarde reconstruction
+    // =============================
+    if (!recon.writeTIFF()) {
+        std::cerr << "Erreur écriture reconstruction\n";
+        return 1;
+    }
+
+    std::cout << "Reconstruction sauvegardée (reconstruction.tiff)\n";
+
+    return 0;
+}
+
+#include <tiffdp.hpp>
+// =========================
+// Core / base
+// =========================
+#include <vtkSmartPointer.h>
+#include <vtkSphereSource.h>
+#include <vtkPolyDataMapper.h>
+#include <vtkActor.h>
+#include <vtkRenderer.h>
+#include <vtkRenderWindow.h>
+#include <vtkRenderWindowInteractor.h>
+#include <vtkInteractorStyleTrackballCamera.h>
+#include <random>
+
+// =========================
+// Data structures
+// =========================
+#include <vtkImageData.h>
+#include <vtkPoints.h>
+#include <vtkPolyData.h>
+#include <vtkCellArray.h>
+#include <vtkDataArray.h>
+#include <vtkFloatArray.h>
+#include <vtkUnsignedCharArray.h>
+#include <vtkPointData.h>
+
+// =========================
+// Filters
+// =========================
+#include <vtkVertexGlyphFilter.h>
+#include <vtkPolyDataNormals.h>
+#include <vtkContourFilter.h>
+#include <vtkMarchingCubes.h>
+
+// =========================
+// Mapping / rendering (surface)
+// =========================
+#include <vtkMapper.h>
+#include <vtkPolyDataMapper.h>
+#include <vtkDataSetMapper.h>
+
+// =========================
+// Actors
+// =========================
+#include <vtkActor.h>
+#include <vtkProperty.h>
+
+// =========================
+// Rendering core
+// =========================
+#include <vtkRenderer.h>
+#include <vtkRenderWindow.h>
+#include <vtkRenderWindowInteractor.h>
+
+// =========================
+// Interaction styles
+// =========================
+#include <vtkInteractorStyleTrackballCamera.h>
+#include <vtkInteractorStyleSwitchBase.h>
+#include <vtkLookupTable.h>
+
+// =========================
+// Volume rendering (IMPORTANT pour voxel / 3D density)
+// =========================
+#include <vtkVolume.h>
+#include <vtkVolumeProperty.h>
+#include <vtkSmartVolumeMapper.h>
+
+// =========================
+// Transfer functions (couleur / transparence)
+// =========================
+#include <vtkColorTransferFunction.h>
+#include <vtkPiecewiseFunction.h>
+
+// =========================
+// Helpers / UI
+// =========================
+#include <vtkAxesActor.h>
+#include <vtkOrientationMarkerWidget.h>
+
+// =========================
+// Math / utilities (VTK)
+# include <vtkMath.h>
+#include <random>
+#include <cmath>
+
+
+int main() {
+    int w = 100, h = 100, d = 100;
+
+    std::vector<float> data(w * h * d);
+
+    // =========================
+    // 🎲 RANDOM VOLUME
+    // =========================
+    std::mt19937 gen(42);
+    std::uniform_real_distribution<float> dist(0.0f, 255.0f);
+
+    for (int i = 0; i < w * h * d; i++) {
+        data[i] = dist(gen);
+    }
+
+    // =========================
+    // 📍 POINTS + SCALARS
+    // =========================
+    auto points = vtkSmartPointer<vtkPoints>::New();
+    auto values = vtkSmartPointer<vtkFloatArray>::New();
+    values->SetName("intensity");
+
+    float threshold = 70.0f;
+    for (int z = 0; z < d; z++)
+    for (int y = 0; y < h; y++)
+    for (int x = 0; x < w; x++) {
+
+        int idx = z * w * h + y * w + x;
+        float value = data[z*w*h + y*w + x];
+
+        if (value > threshold) {
+            points->InsertNextPoint(x, y, z);
+            values->InsertNextValue(data[idx]);
+        }
+    }
+
+    auto polydata = vtkSmartPointer<vtkPolyData>::New();
+    polydata->SetPoints(points);
+    polydata->GetPointData()->SetScalars(values);
+
+    // =========================
+    // 🔹 GLYPH (POINTS VISIBLES)
+    // =========================
+    auto glyph = vtkSmartPointer<vtkVertexGlyphFilter>::New();
+    glyph->SetInputData(polydata);
+    glyph->Update();
+
+    // =========================
+    // 🎨 TRUE GRAYSCALE LUT
+    // =========================
+    auto lut = vtkSmartPointer<vtkLookupTable>::New();
+    lut->SetNumberOfTableValues(256);
+    lut->SetRange(0.0, 255.0);
+
+    for (int i = 0; i < 256; i++) {
+        double v = i / 255.0;
+        lut->SetTableValue(i, v, v, v, 1.0);
+    }
+
+    lut->Build();
+
+    // =========================
+    // 🧠 MAPPER
+    // =========================
+    auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+    mapper->SetInputConnection(glyph->GetOutputPort());
+    mapper->SetLookupTable(lut);
+    mapper->SetScalarRange(0.0, 255.0);
+    mapper->ScalarVisibilityOn();
+    mapper->SetColorModeToMapScalars();
+    mapper->SetScalarModeToUsePointData();
+
+    // =========================
+    // 🎭 ACTOR
+    // =========================
+    auto actor = vtkSmartPointer<vtkActor>::New();
+    actor->SetMapper(mapper);
+    actor->GetProperty()->SetPointSize(2);
+
+    // =========================
+    // 🎥 RENDER
+    // =========================
+    auto renderer = vtkSmartPointer<vtkRenderer>::New();
+    renderer->AddActor(actor);
+    renderer->SetBackground(0.1, 0.1, 0.1);
+
+    auto window = vtkSmartPointer<vtkRenderWindow>::New();
+    window->AddRenderer(renderer);
+    window->SetSize(800, 600);
+
+    auto interactor = vtkSmartPointer<vtkRenderWindowInteractor>::New();
+    interactor->SetRenderWindow(window);
+
+    window->Render();
+    interactor->Start();
+
+    return 0;
+}
+
+
+
+
