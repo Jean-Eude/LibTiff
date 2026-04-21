@@ -1,0 +1,245 @@
+#include <vector>
+#include <cmath>
+#include <iostream>
+#include <algorithm>
+#include "tiffdp.hpp"
+
+// =========================================================
+// MODEL
+// r(θ,φ)=r0(1+αcosθ+βsin(3φ)sin²θ)+Σ c_lm Y_lm
+// S(x)=||x||-r(θ,φ)
+// I=exp(-∫ μ dz)
+// =========================================================
+
+// ================= SH =================
+
+static float factorial(int n){
+    float r=1.0f;
+    for(int i=2;i<=n;i++) r*=i;
+    return r;
+}
+
+static float legendre(int l,int m,float x){
+    float pmm=1.0f;
+
+    if(m>0){
+        float s=sqrtf((1-x)*(1+x));
+        float f=1.0f;
+        for(int i=1;i<=m;i++){
+            pmm *= -f*s;
+            f+=2.0f;
+        }
+    }
+
+    if(l==m) return pmm;
+
+    float p1=x*(2*m+1)*pmm;
+    if(l==m+1) return p1;
+
+    float p2=0;
+    for(int ll=m+2; ll<=l; ll++){
+        p2=((2*ll-1)*x*p1-(ll+m-1)*pmm)/(ll-m);
+        pmm=p1;
+        p1=p2;
+    }
+    return p2;
+}
+
+static float SH(int l,int m,float th,float ph){
+    float K=sqrtf((2*l+1)/(4*M_PI) *
+                  factorial(l-abs(m))/factorial(l+abs(m)));
+
+    float base;
+
+    if(m>0) base = sqrtf(2)*K*cosf(m*ph)*legendre(l,m,cosf(th));
+    else if(m<0) base = sqrtf(2)*K*sinf(-m*ph)*legendre(l,-m,cosf(th));
+    else base = K*legendre(l,0,cosf(th));
+
+    return base * 0.05f;
+}
+
+// ================= SURFACE =================
+
+static float evalSH(const std::vector<float>& c,int L,
+                    float th,float ph,float r0){
+
+    float alpha=0.25f;
+    float beta =0.20f;
+
+    float r=r0*(1.0f + alpha*cosf(th)
+                    + beta*sinf(3.0f*ph)*sinf(th)*sinf(th));
+
+    int i=0;
+
+    for(int l=0;l<=L;l++)
+        for(int m=-l;m<=l;m++)
+            r += c[i++]*SH(l,m,th,ph);
+
+    return r;
+}
+
+// ================= INDEX =================
+
+inline int idx(int x,int y,int z,int W,int H){
+    return x + W*(y + H*z);
+}
+
+// ================= SDF =================
+
+static void buildSDF(std::vector<float>& sdf,
+                     int W,int H,int D,
+                     const std::vector<float>& c,
+                     int L){
+
+    float cx=W*0.5f, cy=H*0.5f, cz=D*0.5f;
+
+    int maxDim = (W > H) ? (W > D ? W : D) : (H > D ? H : D);
+    float scale = 1.0f / (float)maxDim;
+
+    float r0 = 0.35f;
+
+    for(int z=0; z<D; z++)
+    for(int y=0; y<H; y++)
+    for(int x=0; x<W; x++){
+
+        float X=(x-cx)*scale;
+        float Y=(y-cy)*scale;
+        float Z=(z-cz)*scale;
+
+        float r=sqrtf(X*X+Y*Y+Z*Z);
+
+        float th=acosf(Z/(r+1e-6f));
+        float ph=atan2f(Y,X);
+
+        float rs=evalSH(c,L,th,ph,r0);
+
+        sdf[idx(x,y,z,W,H)] = r - rs;
+    }
+}
+
+// ================= DENSITY =================
+
+inline float mu(float sdf){
+    return fmaxf(0.0f, 1.0f - fabsf(sdf));
+}
+
+// ================= CAMERA =================
+
+struct Camera {
+    float ax, ay, az;
+};
+
+// rotation 3D
+static void rotate(float& x,float& y,float& z,
+                   float ax,float ay,float az){
+
+    float cx=cosf(ax), sx=sinf(ax);
+    float cy=cosf(ay), sy=sinf(ay);
+    float cz=cosf(az), sz=sinf(az);
+
+    float y1 = cx*y - sx*z;
+    float z1 = sx*y + cx*z;
+    float x1 = x;
+
+    float z2 = cy*z1 - sy*x1;
+    float x2 = sy*z1 + cy*x1;
+    float y2 = y1;
+
+    float x3 = cz*x2 - sz*y2;
+    float y3 = sz*x2 + cz*y2;
+
+    x=x3; y=y3; z=z2;
+}
+
+// ================= PROJECTION =================
+
+static void projectRX(const std::vector<float>& sdf,
+                      int W,int H,int D,
+                      int w,int h,
+                      const Camera& cam,
+                      std::vector<float>& img){
+
+    for(int py=0; py<h; py++)
+    for(int px=0; px<w; px++){
+
+        float u=(px/(float)w-0.5f);
+        float v=(py/(float)h-0.5f);
+
+        float att=0.0f;
+
+        for(int z=0; z<D; z++){
+
+            float x=u*W;
+            float y=v*H;
+            float zz=z-D*0.5f;
+
+            rotate(x,y,zz,cam.ax,cam.ay,cam.az);
+
+            int ix=(int)(x+W*0.5f);
+            int iy=(int)(y+H*0.5f);
+
+            if(ix<0||ix>=W||iy<0||iy>=H) continue;
+
+            float s=sdf[idx(ix,iy,z,W,H)];
+
+            att += mu(s);
+        }
+
+        img[py*w+px]=expf(-0.02f*att);
+    }
+}
+
+// ================= SAVE =================
+
+static void save(const std::vector<float>& img,
+                 int w,int h,
+                 const std::string& name){
+
+    tiffdp<float> out(w,h,false,name);
+
+    for(int y=0;y<h;y++)
+    for(int x=0;x<w;x++)
+        out.setPixel(x,y,img[y*w+x]);
+
+    out.writeTIFF(name);
+}
+
+// ================= MAIN =================
+
+int main(){
+
+    int W=64,H=64,D=64;
+    int w=128,h=128;
+    int L=3;
+
+    std::vector<float> c((L+1)*(L+1),0.0f);
+
+    // forme initiale
+    c[0]=0.35f;
+    c[3]=0.25f;
+    c[5]=-0.20f;
+    c[8]=0.15f;
+
+    std::vector<float> sdf(W*H*D);
+
+    buildSDF(sdf,W,H,D,c,L);
+
+    std::vector<Camera> cams = {
+        {0,0,0},
+        {0,1.2f,0},
+        {1.2f,0,0},
+        {0.7f,0.7f,0},
+        {0.3f,1.0f,0.2f}
+    };
+
+    for(size_t i=0;i<cams.size();i++){
+
+        std::vector<float> img(w*h);
+
+        projectRX(sdf,W,H,D,w,h,cams[i],img);
+
+        save(img,w,h,"view_"+std::to_string(i)+".tif");
+    }
+
+    std::cout<<"multi-view RX done\n";
+}
