@@ -1,0 +1,108 @@
+    for(int iter=0;iter<50;iter++){
+
+        computeGradient(grad,c,L,target,W,H,D,w,h);
+
+        for(size_t i=0;i<c.size();i++){
+            c[i] -= 0.02f * grad[i];
+
+            if(c[i]>1) c[i]=1;
+            if(c[i]<-1) c[i]=-1;
+        }
+
+        buildSDF(sdf,W,H,D,c,L);
+        projectRX(sdf,W,H,D,w,h,img);
+
+        float loss=costFunction(img,target);
+
+        if(loss<bestLoss){
+            bestLoss=loss;
+            bestC=c;
+            save(img,w,h,"best.tif");
+        }
+
+        std::cout<<"Iter "<<iter<<" loss="<<loss<<"\n";
+    }
+
+struct Vec3 {
+    float x,y,z;
+};
+
+// ================= math utils =================
+
+inline Vec3 normalize(Vec3 v){
+    float n = sqrtf(v.x*v.x + v.y*v.y + v.z*v.z) + 1e-8f;
+    return {v.x/n, v.y/n, v.z/n};
+}
+
+inline Vec3 cross(Vec3 a, Vec3 b){
+    return {
+        a.y*b.z - a.z*b.y,
+        a.z*b.x - a.x*b.z,
+        a.x*b.y - a.y*b.x
+    };
+}
+
+struct Vec3 {
+    float x,y,z;
+};
+
+inline Vec3 normalize(Vec3 v){
+    float n = sqrtf(v.x*v.x + v.y*v.y + v.z*v.z) + 1e-8f;
+    return {v.x/n, v.y/n, v.z/n};
+}
+
+inline Vec3 cross(Vec3 a, Vec3 b){
+    return {
+        a.y*b.z - a.z*b.y,
+        a.z*b.x - a.x*b.z,
+        a.x*b.y - a.y*b.x
+    };
+}
+
+struct Camera {
+    Vec3 origin;
+    Vec3 forward;
+    Vec3 right;
+    Vec3 up;
+};
+
+Camera makeCamera(float theta, float phi, float R){
+
+    Vec3 pos = {
+        sinf(theta)*cosf(phi),
+        sinf(theta)*sinf(phi),
+        cosf(theta)
+    };
+
+    pos.x *= R;
+    pos.y *= R;
+    pos.z *= R;
+
+    Vec3 forward = normalize({-pos.x, -pos.y, -pos.z});
+
+    Vec3 worldUp = {0,0,1};
+
+    Vec3 right = normalize(cross(forward, worldUp));
+    Vec3 up    = cross(right, forward);
+
+    return {pos, forward, right, up};
+}
+
+Vec3 getRayDir(const Camera& cam, int px,int py,int w,int h){
+
+    float u = (px/(float)w - 0.5f);
+    float v = (py/(float)h - 0.5f);
+
+    Vec3 d = {
+        cam.forward.x + u*cam.right.x + v*cam.up.x,
+        cam.forward.y + u*cam.right.y + v*cam.up.y,
+        cam.forward.z + u*cam.right.z + v*cam.up.z
+    };
+
+    return normalize(d);
+}
+
+Camera cam = makeCamera(theta, phi, 2.5f);
+
+std::vector<float> img;
+renderRX(sdf, W,H,D, w,h, cam, img);
