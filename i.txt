@@ -1,0 +1,270 @@
+std::vector<float> m(c.size(), 0.0f);
+std::vector<float> v(c.size(), 0.0f);
+
+float lr = 1e-3f;
+float beta1 = 0.9f;
+float beta2 = 0.99f;   // mieux pour ton gradient bruité
+float eps = 1e-8f;
+
+for(int t = 1; t <= maxIter; t++){
+
+    std::vector<float> grad;
+    computeGradient(grad, c, L, target, W, H, D, w, h);
+
+    adamStep(c, grad, m, v, lr, beta1, beta2, eps, t);
+}
+
+void adamStep(
+    std::vector<float>& params,
+    const std::vector<float>& grad,
+    std::vector<float>& m,
+    std::vector<float>& v,
+    float lr,
+    float beta1,
+    float beta2,
+    float eps,
+    int t)
+{
+    for(size_t i = 0; i < params.size(); i++){
+
+        // 1) moment 1 (moyenne du gradient)
+        m[i] = beta1 * m[i] + (1.0f - beta1) * grad[i];
+
+        // 2) moment 2 (variance du gradient)
+        v[i] = beta2 * v[i] + (1.0f - beta2) * grad[i] * grad[i];
+
+        // 3) correction de biais
+        float mHat = m[i] / (1.0f - powf(beta1, t));
+        float vHat = v[i] / (1.0f - powf(beta2, t));
+
+        // 4) update paramètre
+        params[i] -= lr * mHat / (sqrtf(vHat) + eps);
+    }
+}
+
+
+std::vector<float> m(c.size(), 0.0f);
+std::vector<float> v(c.size(), 0.0f);
+
+float lr = 1e-3f;
+float beta1 = 0.9f;
+float beta2 = 0.99f;   // mieux pour ton gradient bruité
+float eps = 1e-8f;
+
+for(int t = 1; t <= maxIter; t++){
+
+    std::vector<float> grad;
+    computeGradient(grad, c, L, target, W, H, D, w, h);
+
+    adamStep(c, grad, m, v, lr, beta1, beta2, eps, t);
+}
+
+void adamStep(
+    std::vector<float>& params,
+    const std::vector<float>& grad,
+    std::vector<float>& m,
+    std::vector<float>& v,
+    float lr,
+    float beta1,
+    float beta2,
+    float eps,
+    int t)
+{
+    for(size_t i = 0; i < params.size(); i++){
+
+        // 1) moment 1 (moyenne du gradient)
+        m[i] = beta1 * m[i] + (1.0f - beta1) * grad[i];
+
+        // 2) moment 2 (variance du gradient)
+        v[i] = beta2 * v[i] + (1.0f - beta2) * grad[i] * grad[i];
+
+        // 3) correction de biais
+        float mHat = m[i] / (1.0f - powf(beta1, t));
+        float vHat = v[i] / (1.0f - powf(beta2, t));
+
+        // 4) update paramètre
+        params[i] -= lr * mHat / (sqrtf(vHat) + eps);
+    }
+}
+
+--------------------------------------------------------------------------------------------------------
+
+// Algo qui reconstruit bien
+
+int main(){
+
+    int W=48,H=48,D=48;
+
+    int w=128,h=128;
+
+    int L=3;
+
+    Camera cam{0.0f,0.0f,0.0f, 3.0f};
+
+    float lr=0.01f;
+    float beta1=0.9f;
+    float beta2=0.995f;
+    float eps=1e-8f;
+
+    std::vector<float> c((L+1)*(L+1),0.01f);
+    std::vector<float> m(c.size(),0);
+    std::vector<float> v(c.size(),0);
+
+    std::vector<float> sdf(W*H*D);
+
+    std::vector<float> img(w*h);
+    std::vector<float> target(w*h);
+
+    // =========================
+    // TARGET (image plane)
+    // =========================
+    makeTarget(target,w,h);
+
+    // =========================
+    // INIT
+    // =========================
+    buildSDF(sdf,W,H,D,c,L);
+    projectRX(sdf,W,H,D,w,h,cam,img);
+
+    tiffdp<float> init(w,h,false,"init.tif");
+    init.setDatas(img);
+    init.writeTIFF("init.tif");
+
+    std::vector<float> best=img;
+    float bestL=1e30f;
+
+    // =========================
+    // OPTIMISATION
+    // =========================
+    for(int it=0; it<80; it++){
+
+        std::vector<float> g;
+        computeGrad(g,c,target,L,W,H,D,w,h,cam);
+
+        for(size_t i=0;i<c.size();i++){
+
+            m[i]=beta1*m[i]+(1-beta1)*g[i];
+            v[i]=beta2*v[i]+(1-beta2)*g[i]*g[i];
+
+            float mh=m[i]/(1-powf(beta1,it+1));
+            float vh=v[i]/(1-powf(beta2,it+1));
+
+            c[i]-=lr*mh/(sqrtf(vh)+eps);
+
+            c[i]=std::clamp(c[i],-1.0f,1.0f);
+        }
+
+        buildSDF(sdf,W,H,D,c,L);
+        projectRX(sdf,W,H,D,w,h,cam,img);
+
+        float Lval=loss(img,target);
+
+        if(Lval<bestL){
+            bestL=Lval;
+            best=img;
+        }
+
+        std::cout<<"it "<<it<<" loss "<<Lval<<"\n";
+    }
+
+    // =========================
+    // SAVE BEST
+    // =========================
+    tiffdp<float> out(w,h,false,"best.tif");
+    out.setDatas(best);
+    out.writeTIFF("best.tif");
+
+    std::cout<<"DONE best loss="<<bestL<<"\n";
+
+    return 0;
+}
+
+--------------------------------------------------------------------------------------------------------
+
+int main(){
+
+    int W=48,H=48,D=48;
+
+    int w=128,h=128;
+
+    int L=3;
+
+    Camera cam{0.0f,0.0f,0.0f, 3.0f};
+
+    float lr=0.01f;
+    float beta1=0.9f;
+    float beta2=0.995f;
+    float eps=1e-8f;
+
+    std::vector<float> c((L+1)*(L+1),0.01f);
+    std::vector<float> m(c.size(),0);
+    std::vector<float> v(c.size(),0);
+
+    std::vector<float> sdf(W*H*D);
+
+    std::vector<float> img(w*h);
+    std::vector<float> target(w*h);
+
+    // =========================
+    // TARGET (image plane)
+    // =========================
+    makeTarget(target,w,h);
+
+    // =========================
+    // INIT
+    // =========================
+    buildSDF(sdf,W,H,D,c,L);
+    projectRX(sdf,W,H,D,w,h,cam,img);
+
+    tiffdp<float> init(w,h,false,"init.tif");
+    init.setDatas(img);
+    init.writeTIFF("init.tif");
+
+    std::vector<float> best=img;
+    float bestL=1e30f;
+
+    // =========================
+    // OPTIMISATION
+    // =========================
+    for(int it=0; it<80; it++){
+
+        std::vector<float> g;
+        computeGrad(g,c,target,L,W,H,D,w,h,cam);
+
+        for(size_t i=0;i<c.size();i++){
+
+            m[i]=beta1*m[i]+(1-beta1)*g[i];
+            v[i]=beta2*v[i]+(1-beta2)*g[i]*g[i];
+
+            float mh=m[i]/(1-powf(beta1,it+1));
+            float vh=v[i]/(1-powf(beta2,it+1));
+
+            c[i]-=lr*mh/(sqrtf(vh)+eps);
+
+            c[i]=std::clamp(c[i],-1.0f,1.0f);
+        }
+
+        buildSDF(sdf,W,H,D,c,L);
+        projectRX(sdf,W,H,D,w,h,cam,img);
+
+        float Lval=loss(img,target);
+
+        if(Lval<bestL){
+            bestL=Lval;
+            best=img;
+        }
+
+        std::cout<<"it "<<it<<" loss "<<Lval<<"\n";
+    }
+
+    // =========================
+    // SAVE BEST
+    // =========================
+    tiffdp<float> out(w,h,false,"best.tif");
+    out.setDatas(best);
+    out.writeTIFF("best.tif");
+
+    std::cout<<"DONE best loss="<<bestL<<"\n";
+
+    return 0;
+}
