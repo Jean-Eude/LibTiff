@@ -1,0 +1,163 @@
+#include <vector>
+#include <cmath>
+#include <iostream>
+#include <algorithm>
+#include "tiffdp.hpp"
+
+// =========================================================
+// CONSTANTES
+// =========================================================
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+inline int idx(int x,int y,int z,int W,int H)
+{
+    return x + W*(y + H*z);
+}
+
+// =========================================================
+// MATRICE ROTATION φ θ (BASE LOCALE)
+// =========================================================
+struct Mat3 {
+    float m[3][3];
+};
+
+Mat3 rot(float theta, float phi)
+{
+    Mat3 R;
+
+    float z[3] = {
+        sinf(theta)*cosf(phi),
+        sinf(theta)*sinf(phi),
+        cosf(theta)
+    };
+
+    float ax = (fabsf(z[0]) < 0.9f) ? 1.0f : 0.0f;
+    float ay = (fabsf(z[1]) < 0.9f) ? 1.0f : 0.0f;
+
+    float x[3] = {
+        ay*z[2],
+        -ax*z[2],
+        ax*z[1] - ay*z[0]
+    };
+
+    float nx = 1.0f / sqrtf(x[0]*x[0]+x[1]*x[1]+x[2]*x[2]);
+    x[0]*=nx; x[1]*=nx; x[2]*=nx;
+
+    float y[3] = {
+        z[1]*x[2] - z[2]*x[1],
+        z[2]*x[0] - z[0]*x[2],
+        z[0]*x[1] - z[1]*x[0]
+    };
+
+    R.m[0][0]=x[0]; R.m[0][1]=x[1]; R.m[0][2]=x[2];
+    R.m[1][0]=y[0]; R.m[1][1]=y[1]; R.m[1][2]=y[2];
+    R.m[2][0]=z[0]; R.m[2][1]=z[1]; R.m[2][2]=z[2];
+
+    return R;
+}
+
+inline void apply(const Mat3& R, float& x,float& y,float& z)
+{
+    float nx = R.m[0][0]*x + R.m[0][1]*y + R.m[0][2]*z;
+    float ny = R.m[1][0]*x + R.m[1][1]*y + R.m[1][2]*z;
+    float nz = R.m[2][0]*x + R.m[2][1]*y + R.m[2][2]*z;
+
+    x=nx; y=ny; z=nz;
+}
+
+// =========================================================
+// SH SIMPLE (SURFACE RADIUS)
+// =========================================================
+static float evalSH(float theta,float phi,float r0)
+{
+    float r = r0;
+
+    r += 0.08f * sinf(3.0f*theta) * cosf(2.0f*phi);
+    r += 0.05f * cosf(5.0f*phi);
+    r += 0.03f * sinf(6.0f*theta + phi);
+
+    return std::clamp(r, 0.12f, 0.6f);
+}
+
+// =========================================================
+// SDF SH (TON MODÈLE)
+// =========================================================
+void buildSDF(std::vector<float>& sdf,
+              int W,int H,int D,
+              float theta,float phi)
+{
+    float cx=W*0.5f, cy=H*0.5f, cz=D*0.5f;
+
+    int maxDim = std::max({W,H,D});
+    float scale = 1.0f / (float)maxDim;
+
+    Mat3 R = rot(theta,phi);
+
+    float r0 = 0.30f;
+
+    for(int z=0;z<D;z++)
+    for(int y=0;y<H;y++)
+    for(int x=0;x<W;x++)
+    {
+        float X=(x-cx)*scale;
+        float Y=(y-cy)*scale;
+        float Z=(z-cz)*scale;
+
+        // rotation objet
+        apply(R,X,Y,Z);
+
+        float r = sqrtf(X*X + Y*Y + Z*Z);
+
+        float th = acosf(Z/(r+1e-6f));
+        float ph = atan2f(Y,X);
+
+        float rs = evalSH(th,ph,r0);
+
+        sdf[idx(x,y,z,W,H)] = r - rs;
+    }
+}
+
+// =========================================================
+// EXPORT TIFF STACK
+// =========================================================
+void saveSDF(const std::vector<float>& sdf,
+             int W,int H,int D,
+             const std::string& name)
+{
+    tiffdp<float> vol(W,H,D,false,name);
+
+    for(int z=0;z<D;z++)
+    for(int y=0;y<H;y++)
+    for(int x=0;x<W;x++)
+    {
+        float d = sdf[idx(x,y,z,W,H)];
+
+        // density visualisation
+        float v = expf(-10.0f * std::max(d,0.0f));
+
+        vol.setVoxel(x,y,z,v);
+    }
+
+    vol.writeTIFF();
+}
+
+// =========================================================
+// MAIN
+// =========================================================
+int main()
+{
+    int W=64,H=64,D=64;
+
+    std::vector<float> sdf(W*H*D);
+
+    float theta = 0.8f;
+    float phi   = 0.6f;
+
+    buildSDF(sdf,W,H,D,theta,phi);
+
+    saveSDF(sdf,W,H,D,"sdf_sh_rot.tiff");
+
+    std::cout << "DONE\n";
+}
