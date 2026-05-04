@@ -1,0 +1,541 @@
+#include <vector>
+#include <cmath>
+#include <iostream>
+#include <string>
+#include <algorithm>
+#include "tiffdp.hpp"
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+// =========================================================
+// OUTILS
+// =========================================================
+
+inline float clampf(float x, float a, float b) {
+    return std::max(a, std::min(b, x));
+}
+
+inline int idx(int x, int y, int z, int W, int H) {
+    return x + W * (y + H * z);
+}
+
+// =========================================================
+// SPHERICAL HARMONICS
+// =========================================================
+
+float factorial(int n) {
+    float r = 1.0f;
+    for (int i = 2; i <= n; i++) r *= static_cast<float>(i);
+    return r;
+}
+
+float legendre(int l, int m, float x) {
+    x = clampf(x, -1.0f, 1.0f);
+
+    float pmm = 1.0f;
+
+    if (m > 0) {
+        float s = sqrtf(std::max(0.0f, (1.0f - x) * (1.0f + x)));
+        float f = 1.0f;
+
+        for (int i = 1; i <= m; i++) {
+            pmm *= -f * s;
+            f += 2.0f;
+        }
+    }
+
+    if (l == m) return pmm;
+
+    float p1 = x * static_cast<float>(2 * m + 1) * pmm;
+    if (l == m + 1) return p1;
+
+    float p2 = 0.0f;
+
+    for (int ll = m + 2; ll <= l; ll++) {
+        p2 = (static_cast<float>(2 * ll - 1) * x * p1
+            - static_cast<float>(ll + m - 1) * pmm)
+            / static_cast<float>(ll - m);
+
+        pmm = p1;
+        p1 = p2;
+    }
+
+    return p2;
+}
+
+float SH(int l, int m, float th, float ph) {
+    int am = std::abs(m);
+
+    float K = sqrtf(
+        static_cast<float>(2 * l + 1) / (4.0f * static_cast<float>(M_PI))
+        * factorial(l - am)
+        / factorial(l + am)
+    );
+
+    if (m > 0) {
+        return sqrtf(2.0f) * K
+             * cosf(static_cast<float>(m) * ph)
+             * legendre(l, m, cosf(th));
+    }
+
+    if (m < 0) {
+        return sqrtf(2.0f) * K
+             * sinf(static_cast<float>(-m) * ph)
+             * legendre(l, -m, cosf(th));
+    }
+
+    return K * legendre(l, 0, cosf(th));
+}
+
+// =========================================================
+// SURFACE
+// =========================================================
+
+float evalSH(const std::vector<float>& c,
+             int L,
+             float th,
+             float ph,
+             float r0) {
+
+    float r = r0;
+    int i = 0;
+
+    for (int l = 0; l <= L; l++) {
+        for (int m = -l; m <= l; m++) {
+            r += c[i++] * SH(l, m, th, ph);
+        }
+    }
+
+    return std::max(r, 0.02f);
+}
+
+// =========================================================
+// BUILD SDF
+// sdf < 0 : intérieur
+// sdf = 0 : surface
+// sdf > 0 : extérieur
+// =========================================================
+
+void buildSDF(std::vector<float>& sdf,
+              int W, int H, int D,
+              const std::vector<float>& c,
+              int L,
+              float r0) {
+
+    float cx = (W - 1) * 0.5f;
+    float cy = (H - 1) * 0.5f;
+    float cz = (D - 1) * 0.5f;
+
+    int maxDim = std::max(W, std::max(H, D));
+    float scale = 1.0f / static_cast<float>(maxDim);
+
+    for (int z = 0; z < D; z++) {
+    for (int y = 0; y < H; y++) {
+    for (int x = 0; x < W; x++) {
+
+        float X = (static_cast<float>(x) - cx) * scale;
+        float Y = (static_cast<float>(y) - cy) * scale;
+        float Z = (static_cast<float>(z) - cz) * scale;
+
+        float r = sqrtf(X * X + Y * Y + Z * Z);
+
+        float th = 0.0f;
+        float ph = 0.0f;
+
+        if (r > 1e-8f) {
+            float q = clampf(Z / r, -1.0f, 1.0f);
+            th = acosf(q);
+            ph = atan2f(Y, X);
+        }
+
+        float rs = evalSH(c, L, th, ph, r0);
+        sdf[idx(x, y, z, W, H)] = r - rs;
+    }}}
+}
+
+// =========================================================
+// DENSITY CLASSIQUE
+// Objet plein : densité proche de 1 dedans, 0 dehors.
+// Version lissée pour garder un gradient numérique stable.
+// =========================================================
+
+inline float mu(float sdf) {
+    const float softness = 0.01f;
+    float x = clampf(sdf / softness, -50.0f, 50.0f);
+    return 1.0f / (1.0f + expf(x));
+}
+
+// =========================================================
+// PROJECTION PHYSIQUE BRUTE
+// Pas de normalisation ici.
+// Sortie brute : somme des densités le long de Z.
+// =========================================================
+
+void projectClassic(const std::vector<float>& sdf,
+                    int W, int H, int D,
+                    int w, int h,
+                    std::vector<float>& img) {
+
+    img.assign(w * h, 0.0f);
+
+    for (int py = 0; py < h; py++) {
+    for (int px = 0; px < w; px++) {
+
+        float u = (static_cast<float>(px) + 0.5f) / static_cast<float>(w);
+        float v = (static_cast<float>(py) + 0.5f) / static_cast<float>(h);
+
+        int x = static_cast<int>(u * static_cast<float>(W));
+        int y = static_cast<int>(v * static_cast<float>(H));
+
+        x = std::max(0, std::min(W - 1, x));
+        y = std::max(0, std::min(H - 1, y));
+
+        float sum = 0.0f;
+
+        for (int z = 0; z < D; z++) {
+            sum += mu(sdf[idx(x, y, z, W, H)]);
+        }
+
+        // Valeur physique brute.
+        // Ne pas normaliser ici : utilisée pour la loss.
+        img[py * w + px] = sum;
+    }}
+}
+
+// =========================================================
+// LOSS MSE SUR VALEURS PHYSIQUES BRUTES
+// =========================================================
+
+float costFunction(const std::vector<float>& sim,
+                   const std::vector<float>& target) {
+
+    float L = 0.0f;
+
+    for (size_t i = 0; i < sim.size(); i++) {
+        float d = sim[i] - target[i];
+        L += d * d;
+    }
+
+    return L / static_cast<float>(sim.size());
+}
+
+// =========================================================
+// GRADIENT CENTRAL
+// =========================================================
+
+void computeGradient(std::vector<float>& grad,
+                     std::vector<float>& c,
+                     int L,
+                     const std::vector<float>& target,
+                     int W, int H, int D,
+                     int w, int h,
+                     float r0) {
+
+    const float eps = 1e-3f;
+
+    std::vector<float> sdf(W * H * D);
+    std::vector<float> img(w * h);
+
+    grad.assign(c.size(), 0.0f);
+
+    for (size_t i = 0; i < c.size(); i++) {
+
+        float old = c[i];
+
+        c[i] = old + eps;
+        buildSDF(sdf, W, H, D, c, L, r0);
+        projectClassic(sdf, W, H, D, w, h, img);
+        float lossPlus = costFunction(img, target);
+
+        c[i] = old - eps;
+        buildSDF(sdf, W, H, D, c, L, r0);
+        projectClassic(sdf, W, H, D, w, h, img);
+        float lossMinus = costFunction(img, target);
+
+        grad[i] = (lossPlus - lossMinus) / (2.0f * eps);
+
+        c[i] = old;
+    }
+}
+
+float gradNorm(const std::vector<float>& grad) {
+    float s = 0.0f;
+    for (float g : grad) s += g * g;
+    return sqrtf(s);
+}
+
+// =========================================================
+// ADAM
+// =========================================================
+
+void adamUpdate(std::vector<float>& c,
+                const std::vector<float>& grad,
+                std::vector<float>& m,
+                std::vector<float>& v,
+                int iter,
+                float lr,
+                float beta1,
+                float beta2,
+                float epsAdam,
+                float clampMin,
+                float clampMax) {
+
+    int t = iter + 1;
+
+    for (size_t i = 0; i < c.size(); i++) {
+
+        m[i] = beta1 * m[i] + (1.0f - beta1) * grad[i];
+        v[i] = beta2 * v[i] + (1.0f - beta2) * grad[i] * grad[i];
+
+        float mHat = m[i] / (1.0f - powf(beta1, static_cast<float>(t)));
+        float vHat = v[i] / (1.0f - powf(beta2, static_cast<float>(t)));
+
+        c[i] -= lr * mHat / (sqrtf(vHat) + epsAdam);
+
+        c[i] = clampf(c[i], clampMin, clampMax);
+    }
+}
+
+// =========================================================
+// SAVE BRUT
+// =========================================================
+
+void save(const std::vector<float>& img,
+          int w,
+          int h,
+          const std::string& name) {
+
+    tiffdp<float> out(w, h, false, name);
+
+    for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+        out.setPixel(x, y, img[y * w + x]);
+    }}
+
+    out.writeTIFF(name);
+}
+
+// =========================================================
+// SAVE POUR VISU SEULEMENT
+// Normalise uniquement pour l'affichage TIFF.
+// Ne jamais utiliser cette image dans la loss.
+// =========================================================
+
+void saveForVisu(const std::vector<float>& img,
+                 int w,
+                 int h,
+                 const std::string& name) {
+
+    if (img.empty()) return;
+
+    float mn = img[0];
+    float mx = img[0];
+
+    for (float v : img) {
+        mn = std::min(mn, v);
+        mx = std::max(mx, v);
+    }
+
+    std::vector<float> vis(w * h, 0.0f);
+
+    if (mx > mn + 1e-8f) {
+        for (size_t i = 0; i < img.size(); i++) {
+            vis[i] = (img[i] - mn) / (mx - mn);
+            vis[i] = clampf(vis[i], 0.0f, 1.0f);
+        }
+    }
+
+    save(vis, w, h, name);
+}
+
+// =========================================================
+// TARGET WEIRD PHYSIQUE BRUTE
+// La target est dans la même échelle que projectClassic().
+// projectClassic() sort une somme de densités le long de Z.
+// Fond ≈ 0, objet ≈ objectValue.
+// =========================================================
+
+void buildTargetWeird(std::vector<float>& target,
+                      int w,
+                      int h) {
+
+    target.resize(w * h);
+
+    const float backgroundValue = 0.0f;
+
+    // Valeurs physiques brutes dans l'objet
+    const float minObjectValue = 12.0f;
+    const float maxObjectValue = 32.0f;
+
+    for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+
+        float X = (static_cast<float>(x) + 0.5f - w * 0.5f) / static_cast<float>(w);
+        float Y = (static_cast<float>(y) + 0.5f - h * 0.5f) / static_cast<float>(h);
+
+        float r = sqrtf(X * X + Y * Y);
+        float a = atan2f(Y, X);
+
+        float R = 0.210f
+                + 0.040f * sinf(3.0f * a + 0.5f)
+                + 0.025f * cosf(5.0f * a - 0.8f)
+                + 0.015f * sinf(7.0f * a + 1.3f);
+
+        bool inside = (r < R);
+
+        if (!inside) {
+            target[y * w + x] = backgroundValue;
+            continue;
+        }
+
+        // Position relative dans la forme : centre ≈ 0, bord ≈ 1
+        float rn = r / std::max(R, 1e-6f);
+        rn = clampf(rn, 0.0f, 1.0f);
+
+        // Dégradé radial : plus fort au centre, plus faible au bord
+        float radial = 1.0f - rn;
+
+        // Dégradé directionnel : rend l'objet non uniforme gauche/droite/haut/bas
+        float directional = 0.5f
+                          + 0.25f * sinf(2.0f * a + 0.7f)
+                          + 0.20f * cosf(3.0f * a - 1.1f);
+
+        // Dégradé spatial doux pour casser la symétrie
+        float spatial = 0.5f
+                      + 0.35f * X / 0.5f
+                      - 0.20f * Y / 0.5f;
+
+        // Texture basse fréquence, toujours déterministe
+        float texture = 0.5f
+                      + 0.25f * sinf(28.0f * X + 13.0f * Y)
+                      + 0.15f * cosf(17.0f * X - 21.0f * Y);
+
+        // Mélange des composantes
+        float g = 0.45f * radial
+                + 0.25f * directional
+                + 0.20f * spatial
+                + 0.10f * texture;
+
+        g = clampf(g, 0.0f, 1.0f);
+
+        // Valeur physique brute finale
+        float value = minObjectValue
+                    + g * (maxObjectValue - minObjectValue);
+
+        target[y * w + x] = value;
+    }}
+}
+
+// =========================================================
+// MAIN
+// =========================================================
+
+int main() {
+
+    int W = 64, H = 64, D = 64;
+    int w = 128, h = 128;
+
+    int L = 5;
+    float r0 = 0.25f;
+
+    std::vector<float> c((L + 1) * (L + 1), 0.0f);
+
+    // Ne pas faire c[0] = 0.35f.
+    // r0 est déjà le rayon moyen.
+
+    std::vector<float> target(w * h);
+    buildTargetWeird(target, w, h);
+
+    // Sauvegarde uniquement pour visualisation.
+    // Les valeurs physiques de target restent intactes pour la loss.
+    saveForVisu(target, w, h, "target_weird_physical_visu.tif");
+
+    std::vector<float> grad;
+    std::vector<float> sdf(W * H * D);
+    std::vector<float> img(w * h);
+
+    float lr = 0.02f;
+    float beta1 = 0.9f;
+    float beta2 = 0.999f;
+    float epsAdam = 1e-8f;
+
+    std::vector<float> adamM(c.size(), 0.0f);
+    std::vector<float> adamV(c.size(), 0.0f);
+
+    int nIter = 160;
+
+    float bestLoss = 1e30f;
+    std::vector<float> bestC = c;
+
+    for (int iter = 0; iter < nIter; iter++) {
+
+        computeGradient(grad, c, L, target, W, H, D, w, h, r0);
+
+        float lrIter = lr * powf(0.98f, static_cast<float>(iter) / 10.0f);
+
+        adamUpdate(
+            c,
+            grad,
+            adamM,
+            adamV,
+            iter,
+            lrIter,
+            beta1,
+            beta2,
+            epsAdam,
+            -0.30f,
+            0.30f
+        );
+
+        buildSDF(sdf, W, H, D, c, L, r0);
+        projectClassic(sdf, W, H, D, w, h, img);
+
+        // Loss sur valeurs physiques brutes.
+        float loss = costFunction(img, target);
+
+        if (loss < bestLoss) {
+            bestLoss = loss;
+            bestC = c;
+        }
+
+        std::cout << "Iter " << iter
+                  << " | mse_physical=" << loss
+                  << " | best=" << bestLoss
+                  << " | grad=" << gradNorm(grad)
+                  << " | lr=" << lrIter
+                  << "\n";
+
+        if (iter % 20 == 0) {
+            saveForVisu(
+                img,
+                w,
+                h,
+                "result_weird_physical_iter_" + std::to_string(iter) + ".tif"
+            );
+        }
+    }
+
+    // Restaure le meilleur état trouvé.
+    c = bestC;
+
+    buildSDF(sdf, W, H, D, c, L, r0);
+    projectClassic(sdf, W, H, D, w, h, img);
+
+    saveForVisu(img, w, h, "result_weird_physical.tif");
+
+    // Optionnel : sauvegarde brute physique aussi.
+    // Attention : selon ton viewer TIFF, les valeurs brutes >1 peuvent s'afficher bizarrement.
+    save(img, w, h, "result_weird_physical_raw.tif");
+
+    std::cout << "Done\n";
+    std::cout << "Best mse physical = " << bestLoss << "\n";
+    std::cout << "Fichiers generes :\n";
+    std::cout << "  target_weird_physical_visu.tif\n";
+    std::cout << "  result_weird_physical.tif\n";
+    std::cout << "  result_weird_physical_raw.tif\n";
+    std::cout << "  result_weird_physical_iter_0, 20, 40, ...\n";
+
+    return 0;
+}
